@@ -1,6 +1,8 @@
-name: 测试构建
+name: 构建
 
-on: [push]
+on:
+  push:
+    branches: [ master ]
 
 jobs:
   build:
@@ -10,20 +12,30 @@ jobs:
       fail-fast: false
       matrix:
        include:
-         - platform: bromolow
+      #  两行一组，删除不需要的版本
+         - platform: ds3615xs
            version: 6.2.4-25556
-         - platform: bromolow
+         - platform: ds3615xs
            version: 7.0-41222
-         - platform: bromolow
+         - platform: ds3615xs
            version: 7.0.1-42218
-         - platform: apollolake
+         - platform: ds918p
            version: 6.2.4-25556
-         - platform: apollolake
+         - platform: ds918p
            version: 7.0-41890
-         - platform: apollolake
+         - platform: ds918p
            version: 7.0.1-42218
+         - platform: ds3617xs
+           version: 7.0.1-42218
+         - platform: ds3622xsp
+           version: 7.0.1-42218
+         - platform: ds920p
+           version: 7.0.1-42218
+         - platform: ds1621p
+           version: 7.0.1-42218
+
     steps:
-      - name: 准备结束
+      - name: 检出项目文件
         uses: actions/checkout@v2
 
       - name: 缓存加速
@@ -41,9 +53,34 @@ jobs:
       - name: 配置引导镜像
         run: |
           cp sample_user_config.json ${{matrix.platform}}_user_config.json
-          sed -i -e 's\0x0001\0x0002\g' -e 's\0x46f4\0x0002\g' -e 's\1234XXX123\0123456789\g' -e 's\XXYYXXYYXXYY\00AAAAAAAAAA\g' -e 's/00AAAAAAAAAA"/&,\n\t"mac2": "00BBBBBBBBBB",\n\t"netif_num": 2/' -e 's/"synoinfo": {},/"synoinfo": {\n\t"maxlanport": "2"\n    },/' ${{matrix.platform}}_user_config.json
+
+          # 调整VID和PID
+          sed -i -e 's\0x0001\0x0002\g' -e 's\0x46f4\0x0002\g' ${{matrix.platform}}_user_config.json
+
+          # 调整SN和MAC 最好使用 actions secrets 引入
+          sed -i -e 's\1234XXX123\0123456789\g' -e 's\XXYYXXYYXXYY\00AAAAAAAAAA\g' ${{matrix.platform}}_user_config.json
+
+          # 添加第二张网卡mac并设置网卡数量
+          sed -i -e 's/00AAAAAAAAAA"/&,\n\t"mac2": "00BBBBBBBBBB",\n\t"netif_num": 2/' ${{matrix.platform}}_user_config.json
+
+          # 调整synoinfo
+          sed -i -e 's/"synoinfo": {},/"synoinfo": {\n\t"maxlanport": "2"\n    },/' ${{matrix.platform}}_user_config.json
+
+          # 添加扩展驱动
+          ./redpill_tool_chain.sh add https://github.com/jumkey/redpill-load/raw/develop/redpill-acpid/rpext-index.json
           ./redpill_tool_chain.sh add https://github.com/jumkey/redpill-load/raw/develop/redpill-virtio/rpext-index.json
-          ./redpill_tool_chain.sh add https://raw.githubusercontent.com/pocopico/rp-ext/master/mpt3sas/rpext-index.json
+
+      - name: 添加 jumkey.misc
+        if: endsWith(matrix.version,'42218')
+        run: |
+          ./redpill_tool_chain.sh add https://github.com/jumkey/redpill-load/raw/develop/redpill-misc/rpext-index.json
+
+      - name: 添加 jumkey.dtb !!!Create your own device tree binary!!!
+        if: matrix.platform == 'ds920p' || matrix.platform == 'ds1621p'
+        run: |
+          ./redpill_tool_chain.sh add https://github.com/jumkey/redpill-load/raw/develop/redpill-dtb/rpext-index.json
+          echo '!!!Create your own device tree binary!!!'
+          echo 'see https://github.com/jumkey/redpill-load/blob/develop/redpill-dtb/README.md'
 
       - name: 编译引导镜像
         run: ./redpill_tool_chain.sh auto ${{matrix.platform}}-${{matrix.version}}
@@ -53,7 +90,14 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: dsm-${{matrix.platform}}-${{matrix.version}}
-          path: images/redpill-DS[39]*.img
+          path: images/redpill-DS[139]*.img
           if-no-files-found: error
 
+      - name: 删除旧的工作流
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 3
+          keep_minimum_runs: 6
 
